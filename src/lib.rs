@@ -28,8 +28,17 @@ pub extern "system" fn DllMain(
 type ConsoleWriteFn = extern "cdecl" fn(u32, *const wchar_t) -> u32;
 
 lazy_static! {
-    static ref REAL_CONSOLE_WRITE: Mutex<ConsoleWriteFn> =
-        Mutex::new(unsafe { std::mem::transmute(0x00450b90) });
+    static ref DETOUR_CONSOLE_WRITE: Mutex<GenericDetour<ConsoleWriteFn>> = {
+        unsafe {
+            Mutex::new(
+                GenericDetour::<ConsoleWriteFn>::new(
+                    std::mem::transmute(0x00450b90),
+                    detour_console_write,
+                )
+                .unwrap(),
+            )
+        }
+    };
 }
 
 extern "cdecl" fn detour_console_write(color: u32, message: *const wchar_t) -> u32 {
@@ -39,21 +48,19 @@ extern "cdecl" fn detour_console_write(color: u32, message: *const wchar_t) -> u
     let s = unsafe { U16CStr::from_ptr_str(message).to_string_lossy() };
     println!("{}", s);
 
-    return REAL_CONSOLE_WRITE.lock().unwrap()(color, message);
+    let trampoline: ConsoleWriteFn =
+        unsafe { std::mem::transmute(DETOUR_CONSOLE_WRITE.lock().unwrap().trampoline()) };
+    return trampoline(color, message);
 }
 
 fn init() {
-    unsafe {
-        winapi::um::consoleapi::AllocConsole();
-        println!("Initializing...");
+    // Give us a console window to write to
+    unsafe { winapi::um::consoleapi::AllocConsole() };
 
-        let mut hook = GenericDetour::<ConsoleWriteFn>::new(
-            std::mem::transmute(0x00450b90),
-            detour_console_write,
-        )
-        .unwrap();
-        hook.enable().unwrap();
-        *REAL_CONSOLE_WRITE.lock().unwrap() = std::mem::transmute(hook.trampoline());
-        std::mem::forget(hook);
+    println!("Initializing...");
+
+    // Enable hooks
+    unsafe {
+        DETOUR_CONSOLE_WRITE.lock().unwrap().enable().unwrap();
     }
 }
