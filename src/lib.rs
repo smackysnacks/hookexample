@@ -6,6 +6,7 @@ use log::info;
 use widestring::{U16CStr, U16CString};
 use winapi::ctypes::wchar_t;
 use winapi::shared::minwindef::*;
+use winapi::um::winnt::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -14,34 +15,33 @@ pub extern "system" fn DllMain(
     call_reason: DWORD,
     reserved: LPVOID,
 ) -> BOOL {
-    const DLL_PROCESS_ATTACH: DWORD = 1;
-    const DLL_PROCESS_DETACH: DWORD = 0;
-
     match call_reason {
-        DLL_PROCESS_ATTACH => init(),
-        DLL_PROCESS_DETACH => (),
+        DLL_PROCESS_ATTACH => on_attach(),
+        DLL_PROCESS_DETACH => on_detach(),
         _ => (),
     }
 
     return TRUE;
 }
 
-type ConsoleWriteFn = extern "cdecl" fn(TextColor, *const wchar_t) -> BOOL;
-
-// Detour Setup
-lazy_static! {
-    static ref DETOUR_CONSOLE_WRITE: Mutex<GenericDetour<ConsoleWriteFn>> = {
-        unsafe {
-            Mutex::new(
-                GenericDetour::<ConsoleWriteFn>::new(
-                    std::mem::transmute(0x00450b90),
-                    detour_console_write,
+macro_rules! setup_hook {
+    ( $name:ident, $fntype:ty, $originalfn:expr, $detourfn:expr ) => {
+        lazy_static! {
+            static ref $name: Mutex<GenericDetour<$fntype>> = unsafe {
+                Mutex::new(
+                    GenericDetour::<$fntype>::new(std::mem::transmute($originalfn), $detourfn)
+                        .unwrap(),
                 )
-                .unwrap(),
-            )
+            };
         }
     };
 }
+
+// Function signatures
+type ConsoleWriteFn = extern "cdecl" fn(TextColor, *const wchar_t) -> BOOL;
+
+// Hook setup
+setup_hook!(DETOUR_CONSOLE_WRITE, ConsoleWriteFn, 0x00450b90, detour_console_write);
 
 lazy_static! {
     static ref LAST_MESSAGE_HAX: Mutex<bool> = Mutex::new(false);
@@ -88,9 +88,7 @@ extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t
     if s.starts_with("> /hax") {
         *LAST_MESSAGE_HAX.lock().unwrap() = true;
         if &s[6..] == " help" {
-            let hax_usage = r#"first line
-second line
-third line"#;
+            let hax_usage = ["first line", "second line", "third line"].join("\n");
 
             hax_usage.split("\n").for_each(|line| {
                 let u16cstring = U16CString::from_str(line).unwrap();
@@ -104,15 +102,29 @@ third line"#;
     return realfn(color, message);
 }
 
-fn init() {
+fn on_attach() {
     // Give us a console window to write to
     unsafe { winapi::um::consoleapi::AllocConsole() };
+
+    // Create a simple logger so we can use debug, info, error and friends
     simple_logger::init().unwrap();
 
-    info!("Initializing...");
+    info!("Setting up hooks...");
 
     // Enable hooks
     unsafe {
         DETOUR_CONSOLE_WRITE.lock().unwrap().enable().unwrap();
     }
+}
+
+fn on_detach() {
+    info!("Tearing down hooks...");
+
+    // Disable hooks
+    unsafe {
+        DETOUR_CONSOLE_WRITE.lock().unwrap().disable().unwrap();
+    }
+
+    // Detach the console
+    unsafe { winapi::um::wincon::FreeConsole() };
 }
