@@ -37,6 +37,18 @@ macro_rules! setup_hook {
     };
 }
 
+macro_rules! enable_hook {
+    ( $name:ident ) => {
+        unsafe { $name.lock().unwrap().enable().unwrap() };
+    };
+}
+
+macro_rules! disable_hook {
+    ( $name:ident ) => {
+        unsafe { $name.lock().unwrap().disable().unwrap() };
+    };
+}
+
 // Function signatures
 type ConsoleWriteFn = extern "cdecl" fn(TextColor, *const wchar_t) -> BOOL;
 
@@ -112,18 +124,14 @@ fn on_attach() {
     info!("Setting up hooks...");
 
     // Enable hooks
-    unsafe {
-        DETOUR_CONSOLE_WRITE.lock().unwrap().enable().unwrap();
-    }
+    enable_hook!(DETOUR_CONSOLE_WRITE);
 }
 
 fn on_detach() {
     info!("Tearing down hooks...");
 
     // Disable hooks
-    unsafe {
-        DETOUR_CONSOLE_WRITE.lock().unwrap().disable().unwrap();
-    }
+    disable_hook!(DETOUR_CONSOLE_WRITE);
 
     // Detach the console
     unsafe { winapi::um::wincon::FreeConsole() };
