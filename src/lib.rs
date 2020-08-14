@@ -1,13 +1,17 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
 
-use detour::GenericDetour;
+// use detour::GenericDetour;
 use lazy_static::lazy_static;
 use log::info;
 use widestring::{U16CStr, U16CString};
 use winapi::ctypes::{c_char, wchar_t};
 use winapi::shared::minwindef::*;
 use winapi::um::winnt::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
+
+use hook::*;
+
+mod hook;
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -17,37 +21,55 @@ pub extern "system" fn DllMain(
     reserved: LPVOID,
 ) -> BOOL {
     match call_reason {
-        DLL_PROCESS_ATTACH => on_attach(),
-        DLL_PROCESS_DETACH => on_detach(),
+        DLL_PROCESS_ATTACH => on_dll_process_attach(),
+        DLL_PROCESS_DETACH => on_dll_process_detach(),
         _ => (),
     }
 
     return TRUE;
 }
 
-macro_rules! setup_hook {
-    ( $name:ident, $fntype:ty, $originalfn:expr, $detourfn:expr ) => {
-        lazy_static! {
-            static ref $name: Mutex<GenericDetour<$fntype>> = unsafe {
-                Mutex::new(
-                    GenericDetour::<$fntype>::new(std::mem::transmute($originalfn), $detourfn)
-                        .unwrap(),
-                )
-            };
-        }
-    };
+fn on_dll_process_attach() {
+    // Give us a console window to write to
+    unsafe { winapi::um::consoleapi::AllocConsole() };
+
+    // Create a simple logger so we can use debug, info, error and friends
+    simple_logger::init().unwrap();
+
+    info!("Setting up hooks...");
+
+    // Enable hooks
+    enable_hook!(DETOUR_CONSOLE_WRITE);
+    enable_hook!(DETOUR_SPAWN_ITEM);
 }
 
-macro_rules! enable_hook {
-    ( $name:ident ) => {
-        unsafe { $name.lock().unwrap().enable().unwrap() };
-    };
+fn on_dll_process_detach() {
+    info!("Tearing down hooks...");
+
+    // Disable hooks
+    disable_hook!(DETOUR_CONSOLE_WRITE);
+    disable_hook!(DETOUR_SPAWN_ITEM);
+
+    // Detach the console
+    unsafe { winapi::um::wincon::FreeConsole() };
 }
 
-macro_rules! disable_hook {
-    ( $name:ident ) => {
-        unsafe { $name.lock().unwrap().disable().unwrap() };
-    };
+#[repr(C)]
+struct Entity {
+    // +0x00
+    unk1: [u8; 0x28],
+    // +0x28
+    extent: u16,
+    // +0x2a
+    unk2: [u8; 0x16],
+    // +0x40
+    xcoord: f32,
+    // +0x44
+    ycoord: f32,
+    // +0x48
+    unk3: [u8; 0x194],
+    // +0x1dc
+    next_entity: *mut Entity,
 }
 
 // Function signatures
@@ -133,11 +155,13 @@ extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t
 
 #[derive(Debug)]
 struct PlayerCircle {
-    origin: (f32, f32), // x, y
+    /// x, y
+    origin: (f32, f32),
     radius: f32,
 }
 
 struct UnsafeEntity(&'static mut Entity);
+
 unsafe impl Send for UnsafeEntity {}
 
 impl Deref for UnsafeEntity {
@@ -185,24 +209,6 @@ extern "cdecl" fn detour_spawn_item(itemname: *const c_char) -> u32 {
     return realfn(itemname);
 }
 
-#[repr(C)]
-struct Entity {
-    // +0x00
-    unk1: [u8; 0x28],
-    // +0x28
-    extent: u16,
-    // +0x2a
-    unk2: [u8; 0x16],
-    // +0x40
-    xcoord: f32,
-    // +0x44
-    ycoord: f32,
-    // +0x48
-    unk3: [u8; 0x194],
-    // +0x1dc
-    next_entity: *mut Entity,
-}
-
 fn get_player_entity() -> &'static mut Entity {
     let mut entity: &mut Entity = unsafe { &mut **(0x00750708 as *const *mut Entity) };
     while entity.next_entity != 0 as *mut Entity && entity.extent != 0 {
@@ -230,27 +236,3 @@ fn dump_map_entities() {
     }
 }
 
-fn on_attach() {
-    // Give us a console window to write to
-    unsafe { winapi::um::consoleapi::AllocConsole() };
-
-    // Create a simple logger so we can use debug, info, error and friends
-    simple_logger::init().unwrap();
-
-    info!("Setting up hooks...");
-
-    // Enable hooks
-    enable_hook!(DETOUR_CONSOLE_WRITE);
-    enable_hook!(DETOUR_SPAWN_ITEM);
-}
-
-fn on_detach() {
-    info!("Tearing down hooks...");
-
-    // Disable hooks
-    disable_hook!(DETOUR_CONSOLE_WRITE);
-    disable_hook!(DETOUR_SPAWN_ITEM);
-
-    // Detach the console
-    unsafe { winapi::um::wincon::FreeConsole() };
-}
