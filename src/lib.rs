@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Mutex;
 
-// use detour::GenericDetour;
+use argh::FromArgs;
 use lazy_static::lazy_static;
 use log::info;
 use widestring::{U16CStr, U16CString};
@@ -12,6 +12,14 @@ use winapi::um::winnt::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
 use hook::*;
 
 mod hook;
+
+#[derive(FromArgs, Debug)]
+/// Reach new heights.
+struct HaxCLI {
+    /// enable circle mode
+    #[argh(switch, short = 'c')]
+    circle: bool,
+}
 
 #[no_mangle]
 #[allow(non_snake_case, unused_variables)]
@@ -116,15 +124,11 @@ pub enum TextColor {
 }
 
 extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t) -> BOOL {
-    let realfn: ConsoleWriteFn =
+    let real_console_write: ConsoleWriteFn =
         unsafe { std::mem::transmute(DETOUR_CONSOLE_WRITE.lock().unwrap().trampoline()) };
 
     // Convert message to a utf8 string
     let s = unsafe { U16CStr::from_ptr_str(message).to_string_lossy() };
-    info!(
-        "color = {:?} | message = {:?} | *message = {}",
-        color, message, s
-    );
 
     if *LAST_MESSAGE_HAX.lock().unwrap() {
         *LAST_MESSAGE_HAX.lock().unwrap() = false;
@@ -133,15 +137,23 @@ extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t
     }
 
     if s.starts_with("> /hax") {
-        *LAST_MESSAGE_HAX.lock().unwrap() = true;
-        if &s[6..] == " help" {
-            let hax_usage = ["first line", "second line", "third line"].join("\n");
+        let args = &s[6..].split_ascii_whitespace().collect::<Vec<_>>();
+        match HaxCLI::from_args(&["hax"], &args) {
+            Ok(cmd) => {
+                real_console_write(TextColor::White, U16CString::from_str(format!("{:?}", cmd)).unwrap().as_ptr());
 
-            hax_usage.split("\n").for_each(|line| {
-                let u16cstring = U16CString::from_str(line).unwrap();
-                realfn(TextColor::LightBlue, u16cstring.as_ptr());
-            });
-        } else if &s[6..] == " dump entities" {
+                if cmd.circle {
+                    circle();
+                }
+            }
+
+            Err(exit) => {
+                real_console_write(TextColor::LightRed, U16CString::from_str(&exit.output).unwrap().as_ptr());
+            }
+        }
+
+        *LAST_MESSAGE_HAX.lock().unwrap() = true;
+        if &s[6..] == " dump entities" {
             dump_map_entities();
         } else if &s[6..] == " circle" {
             circle();
@@ -150,7 +162,7 @@ extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t
         return TRUE;
     }
 
-    return realfn(color, message);
+    return real_console_write(color, message);
 }
 
 #[derive(Debug)]

@@ -29,4 +29,3 @@ macro_rules! disable_hook {
         unsafe { $name.lock().unwrap().disable().unwrap() };
     };
 }
-

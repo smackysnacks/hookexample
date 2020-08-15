@@ -14,3 +14,4 @@ log = "0.4"
 simple_logger = "1.0.1"
 widestring = "0.4.0"
 winapi = { version = "0.3.6", features = ["consoleapi", "wincon"] }
+argh = "0.1.3"
