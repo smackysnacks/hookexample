@@ -14,8 +14,32 @@ use hook::*;
 mod hook;
 
 #[derive(FromArgs, Debug)]
-/// Reach new heights.
+/// Nox in-game Hax CLI
 struct HaxCLI {
+    #[argh(subcommand)]
+    subcommand: HaxSubcommandEnum,
+}
+
+#[derive(FromArgs, Debug)]
+#[argh(subcommand)]
+enum HaxSubcommandEnum {
+    Entity(EntitySubcommand),
+    Enable(EnableSubcommand),
+}
+
+#[derive(FromArgs, Debug)]
+/// Map entities
+#[argh(subcommand, name = "entities")]
+struct EntitySubcommand {
+    /// dump all entities
+    #[argh(switch, short = 'd')]
+    dump: bool,
+}
+
+#[derive(FromArgs, Debug)]
+/// Map entities
+#[argh(subcommand, name = "enable")]
+struct EnableSubcommand {
     /// enable circle mode
     #[argh(switch, short = 'c')]
     circle: bool,
@@ -124,45 +148,60 @@ pub enum TextColor {
 }
 
 extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t) -> BOOL {
-    let real_console_write: ConsoleWriteFn =
-        unsafe { std::mem::transmute(DETOUR_CONSOLE_WRITE.lock().unwrap().trampoline()) };
+    info!(
+        "detour_console_write(color={:?}, message={:?})",
+        color, message
+    );
 
     // Convert message to a utf8 string
     let s = unsafe { U16CStr::from_ptr_str(message).to_string_lossy() };
 
     if *LAST_MESSAGE_HAX.lock().unwrap() {
         *LAST_MESSAGE_HAX.lock().unwrap() = false;
-
         return TRUE;
     }
 
     if s.starts_with("> /hax") {
+        *LAST_MESSAGE_HAX.lock().unwrap() = true;
+        DETOUR_CONSOLE_WRITE
+            .lock()
+            .unwrap()
+            .call(TextColor::LightBlue, message);
+
         let args = &s[6..].split_ascii_whitespace().collect::<Vec<_>>();
         match HaxCLI::from_args(&["hax"], &args) {
             Ok(cmd) => {
-                real_console_write(TextColor::White, U16CString::from_str(format!("{:?}", cmd)).unwrap().as_ptr());
+                DETOUR_CONSOLE_WRITE.lock().unwrap().call(
+                    TextColor::White,
+                    U16CString::from_str(format!("{:?}", cmd)).unwrap().as_ptr(),
+                );
 
-                if cmd.circle {
-                    circle();
+                match cmd.subcommand {
+                    HaxSubcommandEnum::Entity(cmd) => {
+                        if cmd.dump {
+                            dump_map_entities();
+                        }
+                    }
+
+                    HaxSubcommandEnum::Enable(cmd) => {
+                        if cmd.circle {
+                            circle();
+                        }
+                    }
                 }
             }
 
             Err(exit) => {
-                real_console_write(TextColor::LightRed, U16CString::from_str(&exit.output).unwrap().as_ptr());
+                DETOUR_CONSOLE_WRITE.lock().unwrap().call(
+                    TextColor::LightRed,
+                    U16CString::from_str(&exit.output).unwrap().as_ptr(),
+                );
             }
-        }
-
-        *LAST_MESSAGE_HAX.lock().unwrap() = true;
-        if &s[6..] == " dump entities" {
-            dump_map_entities();
-        } else if &s[6..] == " circle" {
-            circle();
         }
 
         return TRUE;
     }
-
-    return real_console_write(color, message);
+    return DETOUR_CONSOLE_WRITE.lock().unwrap().call(color, message);
 }
 
 #[derive(Debug)]
@@ -211,14 +250,11 @@ fn circle() {
 }
 
 extern "cdecl" fn detour_spawn_item(itemname: *const c_char) -> u32 {
-    let realfn: SpawnItemFn =
-        unsafe { std::mem::transmute(DETOUR_SPAWN_ITEM.lock().unwrap().trampoline()) };
-
     let item = unsafe { std::ffi::CString::from_raw(std::mem::transmute(itemname)) };
-    info!("spawn_item called with '{}'", item.to_string_lossy());
+    info!("detour_spawn_item(itemname=\"{}\")", item.to_string_lossy());
     std::mem::forget(item);
 
-    return realfn(itemname);
+    return DETOUR_SPAWN_ITEM.lock().unwrap().call(itemname);
 }
 
 fn get_player_entity() -> &'static mut Entity {
@@ -247,4 +283,3 @@ fn dump_map_entities() {
         }
     }
 }
-
