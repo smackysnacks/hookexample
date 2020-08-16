@@ -104,6 +104,37 @@ struct Entity {
     next_entity: *mut Entity,
 }
 
+impl Entity {
+    const START_ENTITY_ADDRESS: *const *mut Entity = 0x00750708 as *const *mut Entity;
+
+    fn player() -> &'static mut Entity {
+        let mut entity: &mut Entity = unsafe { std::mem::transmute(*Self::START_ENTITY_ADDRESS) };
+        while entity.next_entity != 0 as _ && entity.extent != 0 {
+            entity = unsafe { std::mem::transmute(entity.next_entity) };
+        }
+
+        entity
+    }
+
+    fn dump_map_entities() {
+        let mut entity: &mut Entity = unsafe { std::mem::transmute(*Self::START_ENTITY_ADDRESS) };
+        info!(
+            "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
+            entity as *const _, entity.extent, entity.xcoord, entity.ycoord
+        );
+        while entity.next_entity != 0 as _ {
+            entity = unsafe { std::mem::transmute(entity.next_entity) };
+            info!(
+                "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
+                entity as *const _, entity.extent, entity.xcoord, entity.ycoord
+            );
+            if entity.extent == 0 {
+                entity.xcoord += 50.0;
+            }
+        }
+    }
+}
+
 // Function signatures
 type ConsoleWriteFn = extern "cdecl" fn(TextColor, *const wchar_t) -> BOOL;
 type SpawnItemFn = extern "cdecl" fn(*const c_char) -> u32;
@@ -179,7 +210,7 @@ extern "cdecl" fn detour_console_write(color: TextColor, message: *const wchar_t
                 match cmd.subcommand {
                     HaxSubcommandEnum::Entity(cmd) => {
                         if cmd.dump {
-                            dump_map_entities();
+                            Entity::dump_map_entities();
                         }
                     }
 
@@ -230,7 +261,7 @@ impl DerefMut for UnsafeEntity {
 }
 
 fn circle() {
-    let mut player = UnsafeEntity(get_player_entity());
+    let mut player = UnsafeEntity(Entity::player());
     let pc = PlayerCircle {
         origin: (player.xcoord, player.ycoord),
         radius: 100.0,
@@ -255,33 +286,4 @@ extern "cdecl" fn detour_spawn_item(itemname: *const c_char) -> u32 {
     std::mem::forget(item);
 
     return DETOUR_SPAWN_ITEM.lock().unwrap().call(itemname);
-}
-
-fn get_player_entity() -> &'static mut Entity {
-    let start_entity_address = 0x00750708 as *const *mut Entity;
-    let mut entity: &mut Entity = unsafe { std::mem::transmute(*start_entity_address) };
-    while entity.next_entity != 0 as _ && entity.extent != 0 {
-        entity = unsafe { std::mem::transmute(entity.next_entity) };
-    }
-
-    entity
-}
-
-fn dump_map_entities() {
-    let start_entity_address = 0x00750708 as *const *mut Entity;
-    let mut entity: &mut Entity = unsafe { std::mem::transmute(*start_entity_address) };
-    info!(
-        "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
-        entity as *const _, entity.extent, entity.xcoord, entity.ycoord
-    );
-    while entity.next_entity != 0 as _ {
-        entity = unsafe { std::mem::transmute(entity.next_entity) };
-        info!(
-            "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
-            entity as *const _, entity.extent, entity.xcoord, entity.ycoord
-        );
-        if entity.extent == 0 {
-            entity.xcoord += 50.0;
-        }
-    }
 }
