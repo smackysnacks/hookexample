@@ -258,22 +258,24 @@ extern "cdecl" fn detour_spawn_item(itemname: *const c_char) -> u32 {
 }
 
 fn get_player_entity() -> &'static mut Entity {
-    let mut entity: &mut Entity = unsafe { &mut **(0x00750708 as *const *mut Entity) };
-    while entity.next_entity != 0 as *mut Entity && entity.extent != 0 {
-        entity = unsafe { &mut *entity.next_entity };
+    let start_entity_address = 0x00750708 as *const *mut Entity;
+    let mut entity: &mut Entity = unsafe { std::mem::transmute(*start_entity_address) };
+    while entity.next_entity != 0 as _ && entity.extent != 0 {
+        entity = unsafe { std::mem::transmute(entity.next_entity) };
     }
 
     entity
 }
 
 fn dump_map_entities() {
-    let mut entity: &mut Entity = unsafe { &mut **(0x00750708 as *const *mut Entity) };
+    let start_entity_address = 0x00750708 as *const *mut Entity;
+    let mut entity: &mut Entity = unsafe { std::mem::transmute(*start_entity_address) };
     info!(
         "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
         entity as *const _, entity.extent, entity.xcoord, entity.ycoord
     );
-    while entity.next_entity != 0 as *mut Entity {
-        entity = unsafe { &mut *entity.next_entity };
+    while entity.next_entity != 0 as _ {
+        entity = unsafe { std::mem::transmute(entity.next_entity) };
         info!(
             "entity = &entity: {:?}, extent: {}, xcoord: {}, ycoord: {}",
             entity as *const _, entity.extent, entity.xcoord, entity.ycoord
